@@ -30,7 +30,7 @@ set -uo pipefail
 #   DRAYTEK_USERNAME     VPN username           (required for connect/ping)
 #   DRAYTEK_PASSWORD     VPN password           (required for connect/ping)
 #   DRAYTEK_PORT         default 443
-#   DRAYTEK_VERIFY_CERT  default no
+#   DRAYTEK_VERIFY_CERT  default yes
 #   PING_TARGET          default 8.8.8.8  (must be routable via the VPN —
 #                        internet ping requires the router to forward
 #                        tunnel traffic upstream; use an internal host
@@ -76,7 +76,7 @@ CON_NAME="draytek-e2e-test"
 SERVICE_TYPE="org.freedesktop.NetworkManager.draytek"
 
 DRAYTEK_PORT="${DRAYTEK_PORT:-443}"
-DRAYTEK_VERIFY_CERT="${DRAYTEK_VERIFY_CERT:-no}"
+DRAYTEK_VERIFY_CERT="${DRAYTEK_VERIFY_CERT:-yes}"
 DRAYTEK_DEFAULT_ROUTE="${DRAYTEK_DEFAULT_ROUTE:-no}"
 # Smart VPN "use default gateway on remote network": never-default=no
 # routes ALL traffic through the tunnel.

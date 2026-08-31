@@ -184,6 +184,11 @@ pub async fn spawn_tunnel(profile: ConnectionProfile, conn: Connection) -> Tunne
             };
             emit_failure(&conn, reason).await;
         }
+        // NM treats Failure as informational; the activation is only torn
+        // down on the STOPPED state change. Without it a failed connect
+        // hangs until NM's 60s vpn connect timeout.
+        emit_state_changed(&conn, 5).await; // STOPPING
+        emit_state_changed(&conn, 6).await; // STOPPED
     });
 
     TunnelHandle { shutdown }
@@ -415,10 +420,9 @@ async fn run_tunnel(
     .await;
 
     // Teardown — closing the TUN fd removes the non-persistent device.
+    // STOPPING/STOPPED are emitted by spawn_tunnel after run_tunnel returns,
+    // so the error path emits Failure before STOPPED.
     drop(tun);
-
-    emit_state_changed(&conn, 5).await; // STOPPING
-    emit_state_changed(&conn, 6).await; // STOPPED
 
     data_result
 }
