@@ -14,3 +14,6 @@ standalone/appimage-tools/
 *~
 .idea/
 .vscode/
+
+# E2E test credentials (copy of tests/e2e/e2e.env.example)
+tests/e2e/e2e.env

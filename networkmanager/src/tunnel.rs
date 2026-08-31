@@ -256,6 +256,16 @@ async fn run_tunnel(
     )
     .await?;
 
+    // The external VPN server address, as actually connected (post-DNS).
+    // NM needs this as "gateway" in the config dicts to install a bypass
+    // host route via the physical uplink; otherwise default-route mode
+    // (never-default=no) routes the tunnel's own TLS transport into the
+    // tunnel and blackholes it.
+    let server_ip: Option<std::net::Ipv4Addr> = match tls_stream.get_ref().peer_addr() {
+        Ok(std::net::SocketAddr::V4(addr)) => Some(*addr.ip()),
+        _ => None,
+    };
+
     // Phase 2: PPP negotiation
     let nm_status = NmNegotiationStatus { auth_failed };
     let mut neg = match negotiate::negotiate(&profile, &mut tls_stream, &nm_status).await? {
@@ -271,6 +281,11 @@ async fn run_tunnel(
     // Phase 3: Create TUN device (running as root — no pkexec needed)
     let tun = crate::tun_device::create_tun(TUN_DEVICE_NAME, neg.local_ip, neg.remote_ip, neg.mtu)?;
 
+    // External gateway for NM's bypass route; the PPP peer is only a
+    // fallback if the socket address is somehow unavailable.
+    let ext_gateway = server_ip.unwrap_or(neg.remote_ip);
+    info!("External gateway reported to NM: {ext_gateway}");
+
     // Phase 4: Emit Config and Ip4Config to NM
     let mut config = HashMap::new();
     config.insert(
@@ -281,7 +296,7 @@ async fn run_tunnel(
     config.insert(
         "gateway".to_string(),
         OwnedValue::try_from(zbus::zvariant::Value::new(
-            neg.remote_ip.to_bits().swap_bytes(),
+            ext_gateway.to_bits().swap_bytes(),
         ))
         .unwrap(),
     );
@@ -315,6 +330,14 @@ async fn run_tunnel(
     );
     ip4.insert(
         "gateway".to_string(),
+        OwnedValue::try_from(zbus::zvariant::Value::new(
+            ext_gateway.to_bits().swap_bytes(),
+        ))
+        .unwrap(),
+    );
+    // Internal point-to-point peer (the router's end of the PPP link).
+    ip4.insert(
+        "ptp".to_string(),
         OwnedValue::try_from(zbus::zvariant::Value::new(
             neg.remote_ip.to_bits().swap_bytes(),
         ))

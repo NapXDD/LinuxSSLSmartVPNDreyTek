@@ -12,11 +12,13 @@ CFLAGS   += -fvisibility=hidden
 
 # Install paths
 # Debian ships `plugindir` in libnm.pc; Arch/Fedora do not. Fall back to
-# common locations based on what exists on disk.
+# common locations based on what exists on disk (Debian multiarch, then
+# Fedora lib64, then plain /usr/lib). Overridable: make NM_PLUGIN_DIR=...
 NM_PLUGIN_DIR := $(shell \
 	d=$$($(PKG_CFG) --variable=plugindir libnm 2>/dev/null); \
 	if [ -n "$$d" ]; then echo "$$d"; \
 	elif [ -d /usr/lib/x86_64-linux-gnu/NetworkManager ]; then echo /usr/lib/x86_64-linux-gnu/NetworkManager; \
+	elif [ -d /usr/lib64/NetworkManager ]; then echo /usr/lib64/NetworkManager; \
 	else echo /usr/lib/NetworkManager; \
 	fi)
 

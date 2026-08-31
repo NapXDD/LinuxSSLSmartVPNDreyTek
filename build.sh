@@ -33,10 +33,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ── Install paths ──────────────────────────────────────────────────
-# NM_PLUGIN_DIR holds the editor .so files. Debian uses a multiarch subdir;
-# Arch, Fedora, and most others use /usr/lib/NetworkManager directly. Query
-# libnm's pkgconfig first (Debian defines `plugindir` there) and fall back to
-# on-disk detection.
+# NM_PLUGIN_DIR holds the editor .so files. Debian uses a multiarch subdir,
+# Fedora uses /usr/lib64/NetworkManager, Arch and most others use
+# /usr/lib/NetworkManager directly. Query libnm's pkgconfig first (Debian
+# defines `plugindir` there) and fall back to on-disk detection.
 detect_nm_plugin_dir() {
     local dir
     dir=$(pkg-config --variable=plugindir libnm 2>/dev/null || true)
@@ -44,6 +44,8 @@ detect_nm_plugin_dir() {
         echo "$dir"
     elif [ -d /usr/lib/x86_64-linux-gnu/NetworkManager ]; then
         echo /usr/lib/x86_64-linux-gnu/NetworkManager
+    elif [ -d /usr/lib64/NetworkManager ]; then
+        echo /usr/lib64/NetworkManager
     else
         echo /usr/lib/NetworkManager
     fi
@@ -255,6 +257,29 @@ arch_build() {
     fi
 }
 
+# ── Fedora package (rpmbuild) ─────────────────────────────────────
+
+fedora_build() {
+    local install_flag="${1:-}"
+
+    if ! command -v rpmbuild &>/dev/null; then
+        error "rpmbuild not found — install it with: sudo dnf install rpm-build"
+        exit 1
+    fi
+
+    header "Fedora Package (rpmbuild)"
+    info "Running packaging/fedora/build_rpm.sh"
+    bash packaging/fedora/build_rpm.sh
+
+    if [ "$install_flag" = "install" ]; then
+        info "Installing RPMs (requires sudo)"
+        # --replacepkgs so rebuilding the same version reinstalls cleanly.
+        sudo rpm -Uvh --replacepkgs \
+            target/rpm/RPMS/"$(uname -m)"/draytek-vpn-*.rpm
+        info "Installed. DrayTek SSL VPN should appear in GNOME Settings > VPN."
+    fi
+}
+
 # ── Clean ──────────────────────────────────────────────────────────
 
 do_clean() {
@@ -276,6 +301,7 @@ Targets:
   nm               NetworkManager plugin
   tray             System tray indicator
   arch             Arch package (makepkg wrapper for packaging/arch)
+  fedora           Fedora RPMs (rpmbuild wrapper for packaging/fedora)
   all              All of the above
 
 Actions:
@@ -298,6 +324,7 @@ Examples:
   ./build.sh nm deb             Build NM plugin .deb package
   ./build.sh tray install       Build + install tray indicator
   ./build.sh arch install       Build + install Arch package via pacman
+  ./build.sh fedora install     Build + install Fedora RPMs
   ./build.sh all release        Build everything (release)
   ./build.sh clean              Clean C artifacts
 EOF
@@ -344,6 +371,13 @@ case "$target" in
         case "$action" in
             debug|""|release)  arch_build "" ;;
             install)           arch_build install ;;
+            *)                 usage ;;
+        esac
+        ;;
+    fedora)
+        case "$action" in
+            debug|""|release)  fedora_build "" ;;
+            install)           fedora_build install ;;
             *)                 usage ;;
         esac
         ;;

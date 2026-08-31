@@ -70,6 +70,17 @@ sudo pacman -S --needed base-devel gtk4 libadwaita openssl pkgconf rust
 sudo pacman -S --needed networkmanager gtk3 glib2
 ```
 
+```bash
+# Fedora
+sudo dnf install gcc gcc-c++ make pkgconf-pkg-config gtk4-devel libadwaita-devel openssl-devel
+
+# Additional dependencies for the NetworkManager plugin
+sudo dnf install NetworkManager-libnm-devel gtk3-devel
+
+# For building RPM packages (./build.sh fedora)
+sudo dnf install rpm-build
+```
+
 ### Rust toolchain
 
 Install via [rustup](https://rustup.rs/) if you don't have it:
@@ -98,6 +109,7 @@ Everything is managed through `./build.sh`:
 | `nm` | NetworkManager plugin (Rust service + C editor + C auth-dialog) |
 | `tray` | System tray indicator binary (installed automatically by `nm install`, use this to rebuild the binary only) |
 | `arch` | Arch Linux package via `makepkg` (wraps `packaging/arch/PKGBUILD`) |
+| `fedora` | Fedora RPM packages via `rpmbuild` (wraps `packaging/fedora/`) |
 | `all` | All of the above |
 
 ### Actions
@@ -127,6 +139,9 @@ Everything is managed through `./build.sh`:
 
 # Build + install as a native Arch package (pacman-tracked)
 ./build.sh arch install
+
+# Build + install as native Fedora RPMs (rpm-tracked)
+./build.sh fedora install
 
 # Build everything in release mode
 ./build.sh all release
@@ -159,6 +174,13 @@ Everything is managed through `./build.sh`:
 
 # Or build + install in one shot via pacman
 ./build.sh arch install
+
+# Build Fedora RPMs (standalone app + NetworkManager plugin/tray)
+./build.sh fedora
+# → target/rpm/RPMS/x86_64/draytek-vpn-{standalone,networkmanager}-0.1.0-1.*.rpm
+
+# Or build + install in one shot
+./build.sh fedora install
 ```
 
 Install a .deb with:
@@ -166,7 +188,7 @@ Install a .deb with:
 sudo dpkg -i target/debian/draytek-vpn_0.1.0_amd64.deb
 ```
 
-See [`packaging/arch/README.md`](packaging/arch/README.md) for details on the Arch package layout and SNI tray hosts.
+See [`packaging/arch/README.md`](packaging/arch/README.md) for details on the Arch package layout and SNI tray hosts, and [`packaging/fedora/README.md`](packaging/fedora/README.md) for the Fedora RPM layout and SELinux notes.
 
 ### Dependencies
 
@@ -200,9 +222,11 @@ sudo cp standalone/data/com.draytek.vpn.policy /usr/share/polkit-1/actions/
 # Install the plugin
 ./build.sh nm install
 
-# Create a connection
+# Create a connection (vpn-type resolves "draytek" via the installed
+# service .name file; some nmcli versions reject the older
+# "vpn-service-type" spelling)
 nmcli connection add type vpn \
-    vpn-service-type org.freedesktop.NetworkManager.draytek \
+    vpn-type draytek \
     con-name "My DrayTek VPN" \
     vpn.data "gateway=vpn.example.com,port=443,username=myuser,verify-cert=no"
 
@@ -296,9 +320,12 @@ draytek-vpn/
 │       └── icons.rs                #   Colored status icons
 │
 └── packaging/
-    └── arch/                       # Arch PKGBUILD (makepkg -si)
-        ├── PKGBUILD
-        └── draytek-vpn-networkmanager.install
+    ├── arch/                       # Arch PKGBUILD (makepkg -si)
+    │   ├── PKGBUILD
+    │   └── draytek-vpn-networkmanager.install
+    └── fedora/                     # Fedora RPM spec (rpmbuild)
+        ├── draytek-vpn.spec
+        └── build_rpm.sh
 ```
 
 ## Testing
@@ -306,6 +333,29 @@ draytek-vpn/
 ```bash
 cargo test --workspace
 ```
+
+### End-to-end (Fedora)
+
+```bash
+# Full e2e on a Fedora (KDE) machine: build → install → connect → ping
+# through the tunnel → teardown. Needs a reachable DrayTek router.
+# Credentials go in tests/e2e/e2e.env (gitignored; copy the .example).
+cp tests/e2e/e2e.env.example tests/e2e/e2e.env && $EDITOR tests/e2e/e2e.env
+tests/e2e/e2e-fedora.sh
+
+# Containerized smoke test (podman/docker): build + install + NM plugin
+# registration inside Fedora 44 — no router needed.
+tests/e2e/podman-smoke.sh
+```
+
+See [`tests/e2e/README.md`](tests/e2e/README.md) for details.
+
+## Credits
+
+Originally created by [julianjc84](https://github.com/julianjc84) —
+[draytek-ssl-vpn-client-linux](https://github.com/julianjc84/draytek-ssl-vpn-client-linux).
+This repository builds on that work with Fedora RPM packaging, end-to-end
+tests, and NetworkManager routing fixes.
 
 ## License
 

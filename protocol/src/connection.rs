@@ -89,9 +89,7 @@ pub async fn connect(
             .context("Failed to read HTTP response")?;
         response_buf.push(byte[0]);
         // Look for \r\n\r\n (end of HTTP headers)
-        if response_buf.len() >= 4
-            && response_buf[response_buf.len() - 4..] == [b'\r', b'\n', b'\r', b'\n']
-        {
+        if response_buf.len() >= 4 && response_buf[response_buf.len() - 4..] == *b"\r\n\r\n" {
             break;
         }
         if response_buf.len() > 4096 {
