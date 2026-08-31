@@ -188,7 +188,7 @@ Install a .deb with:
 sudo dpkg -i target/debian/draytek-vpn_0.1.0_amd64.deb
 ```
 
-See [`packaging/arch/README.md`](packaging/arch/README.md) for details on the Arch package layout and SNI tray hosts, and [`packaging/fedora/README.md`](packaging/fedora/README.md) for the Fedora RPM layout and SELinux notes.
+See [`packaging/arch/README.md`](packaging/arch/README.md) for details on the Arch package layout and SNI tray hosts, and [`packaging/fedora/README.md`](packaging/fedora/README.md) for the Fedora RPM layout, a clean-install guide, and SELinux notes.
 
 ### Dependencies
 

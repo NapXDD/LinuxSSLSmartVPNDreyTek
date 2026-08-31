@@ -63,8 +63,12 @@ step "Start Fedora container ($IMAGE)"
 
 step "Copy source tree into the container"
 run "mkdir -p /root/src"
-"$ENGINE" cp "$PROJECT_DIR/." "$NAME:/root/src/"
-run "rm -rf /root/src/target /root/src/.git"
+# tar streaming instead of `$ENGINE cp dir/.`: podman cp on a Windows
+# host copies the directory itself rather than its contents, nesting
+# the tree one level deep. Excluding target/ and .git/ up front also
+# avoids shipping build artifacts into the container.
+tar -C "$PROJECT_DIR" --exclude=target --exclude=.git -cf - . \
+    | "$ENGINE" exec -i "$NAME" tar -C /root/src -xf -
 
 step "Install build dependencies + NetworkManager"
 run "dnf install -y --setopt=install_weak_deps=False \
@@ -113,6 +117,9 @@ if [ -n "${DRAYTEK_GATEWAY:-}" ] && [ -n "${DRAYTEK_PASSWORD:-}" ]; then
     # Run udevd, then re-own eth0 with a static profile matching its
     # current podman-assigned address.
     run "dnf install -y -q systemd-udev && /usr/lib/systemd/systemd-udevd --daemon && udevadm trigger && udevadm settle || true"
+    # Drop the unmanaged-devices conf from the registration phase — NM
+    # must own eth0 to serve as the VPN's source connection.
+    run "rm -f /etc/NetworkManager/conf.d/e2e-unmanaged.conf"
     run "pkill NetworkManager; sleep 1; /usr/sbin/NetworkManager; sleep 3"
     run 'IP=$(ip -o -4 addr show eth0 | awk "{print \$4}"); GW=$(ip route | awk "/default/ {print \$3}"); \
          nmcli connection add type ethernet ifname eth0 con-name base ipv4.method manual ipv4.addresses "$IP" ipv4.gateway "$GW" ipv4.dns 8.8.8.8 && \
@@ -121,7 +128,7 @@ if [ -n "${DRAYTEK_GATEWAY:-}" ] && [ -n "${DRAYTEK_PASSWORD:-}" ]; then
     run "nmcli --wait 60 connection up smoke"
     run "ip -o -4 addr show; ip route"
     run "VPN_IP=\$(nmcli -g IP4.ADDRESS connection show smoke | head -n1 | cut -d/ -f1); \
-         TUN_IF=\$(ip -o -4 addr show | awk -v ip=\"\$VPN_IP\" '\$4 ~ \"^\"ip\"/\" {print \$2; exit}'); \
+         TUN_IF=\$(ip -o -4 addr show | awk -v ip=\"\$VPN_IP\" '\$4 ~ \"^\"ip\"(/|$)\" {print \$2; exit}'); \
          echo \"tunnel: \$TUN_IF (\$VPN_IP)\"; \
          echo \"route to ${PING_TARGET:-8.8.8.8}: \$(ip route get ${PING_TARGET:-8.8.8.8} | head -n1)\"; \
          ping -c 4 -W 5 -I \"\$TUN_IF\" ${PING_TARGET:-8.8.8.8}"

@@ -28,6 +28,56 @@ Like the Arch package, the RPMs are built from the surrounding git checkout —
 `target/rpm/SOURCES/` and runs `rpmbuild` with `_topdir` pointed at
 `target/rpm/`, so nothing touches `~/rpmbuild`.
 
+## Clean install
+
+Use this when a machine has had earlier versions on it — whether from RPMs
+or from manual `./build.sh nm install` / `tray install` runs (which copy
+files RPM doesn't know about) — and you want to start from a known state.
+
+```bash
+# 1. Remove any previous RPM install (scriptlets restart NetworkManager)
+sudo dnf remove draytek-vpn-standalone draytek-vpn-networkmanager
+
+# 2. Remove leftovers from earlier manual installs. Safe to run even if
+#    there are none — these just rm -f the known paths and restart NM.
+./build.sh nm uninstall
+./build.sh tray uninstall
+
+# 3. Drop stale test profiles (your real VPN profiles can stay — they
+#    reconnect once the plugin is reinstalled)
+nmcli connection delete draytek-e2e-test 2>/dev/null
+
+# 4. Start from clean sources
+git pull
+./build.sh clean               # C artifacts (editor .so, auth-dialog)
+cargo clean                    # Rust target/, including target/rpm
+
+# 5. Build dependencies, then build + install fresh
+./install_dependencies.sh all
+sudo dnf install rpm-build
+./build.sh fedora install      # builds RPMs, installs, restarts NM
+```
+
+Verify the result:
+
+```bash
+# NM resolves the plugin (creating a connection is the registration check)
+nmcli connection add type vpn ifname "*" con-name check vpn-type draytek \
+    vpn.data "gateway=placeholder" && nmcli connection delete check
+
+# Full end-to-end test against the installed plugin (see tests/e2e/README.md)
+tests/e2e/e2e-fedora.sh --skip-build
+```
+
+Notes:
+
+- Reinstalling the **same version** works: `./build.sh fedora install` uses
+  `rpm -Uvh --replacepkgs`, so a rebuilt 0.1.0-1 still replaces the
+  installed binaries.
+- The tray autostarts on the next session login. To get it immediately
+  after an install, run `draytek-vpn-tray &` once (a second instance later
+  exits cleanly — it's single-instance via D-Bus).
+
 ## What it installs
 
 ### draytek-vpn-networkmanager

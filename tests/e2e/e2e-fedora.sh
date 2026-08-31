@@ -211,7 +211,9 @@ else
             fail "No IPv4 address on the VPN connection"
         fi
 
-        TUN_IF="$(ip -o -4 addr show | awk -v ip="$VPN_IP" '$4 ~ "^"ip"/" {print $2; exit}')"
+        # Peer-style (ptp) addresses print as "inet <ip> peer <peer>/32" —
+        # no /prefix on field 4 — so match a bare IP as well as ip/prefix.
+        TUN_IF="$(ip -o -4 addr show | awk -v ip="$VPN_IP" '$4 ~ "^"ip"(/|$)" {print $2; exit}')"
         if [ -n "$TUN_IF" ]; then
             pass "Tunnel interface up: $TUN_IF"
             echo "       routes: $(ip route show dev "$TUN_IF" | tr '\n' ' ')"
