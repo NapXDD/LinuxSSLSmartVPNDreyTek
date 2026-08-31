@@ -1,4 +1,8 @@
 _restart_nm() {
+    # NetworkManager.service uses KillMode=process: a restart leaves an
+    # already-running VPN service process alive holding the D-Bus name, so
+    # NM would keep talking to the old binary. Kill it first.
+    pkill -f '^/usr/lib/NetworkManager/nm-draytek-service' 2>/dev/null || true
     if systemctl is-active --quiet NetworkManager; then
         echo ">>> Restarting NetworkManager to load/unload the draytek plugin"
         systemctl restart NetworkManager || true

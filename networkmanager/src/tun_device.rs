@@ -6,15 +6,22 @@ use anyhow::{Context, Result};
 use std::ffi::CString;
 use std::net::Ipv4Addr;
 use std::os::unix::io::RawFd;
-use tracing::{info, warn};
+use tracing::info;
 
 // ioctl request code for TUNSETIFF
 const TUNSETIFF: libc::c_ulong = 0x400454ca;
 
 /// Create a TUN device, configure its IP and MTU, and bring it up.
 ///
-/// Returns the async TUN device for read/write. Since we're running as root
-/// (NM spawns VPN plugins as root), no privilege elevation is needed.
+/// The device is created by TUNSETIFF itself rather than pre-created with
+/// `ip tuntap add`: on Fedora with SELinux enforcing, a device pre-created by
+/// `ip` carries ifconfig_t's tun_socket label, and NetworkManager_t (our
+/// domain) is not allowed to relabelfrom it — attaching then fails with
+/// EACCES. Creating the device in our own domain only needs
+/// self:tun_socket create, which the stock policy grants.
+///
+/// The resulting device is non-persistent: the kernel removes it when the
+/// returned fd closes, so error and teardown cleanup are automatic.
 pub fn create_tun(
     name: &str,
     local_ip: Ipv4Addr,
@@ -23,80 +30,53 @@ pub fn create_tun(
 ) -> Result<tun_rs::AsyncDevice> {
     info!("Creating TUN device {name}");
 
-    // Create the TUN device using ip commands (we're root)
-    let status = std::process::Command::new("ip")
-        .args(["tuntap", "add", "dev", name, "mode", "tun"])
-        .status()
-        .context("Failed to run ip tuntap add")?;
-    if !status.success() {
-        anyhow::bail!("ip tuntap add failed with {status}");
-    }
+    let c_name = CString::new(name).context("Invalid TUN device name")?;
 
-    // Configure IP address
-    let status = std::process::Command::new("ip")
-        .args([
-            "addr",
-            "add",
-            &format!("{local_ip}"),
-            "peer",
-            &format!("{peer_ip}"),
-            "dev",
-            name,
-        ])
-        .status()
-        .context("Failed to configure IP address")?;
-    if !status.success() {
-        delete_tun(name);
-        anyhow::bail!("ip addr add failed with {status}");
-    }
-
-    // Set MTU and bring up
-    let status = std::process::Command::new("ip")
-        .args(["link", "set", name, "mtu", &mtu.to_string(), "up"])
-        .status()
-        .context("Failed to set MTU and bring up")?;
-    if !status.success() {
-        delete_tun(name);
-        anyhow::bail!("ip link set failed with {status}");
-    }
-
-    // Open the TUN device
     let fd = unsafe { libc::open(c"/dev/net/tun".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
     if fd < 0 {
-        delete_tun(name);
         return Err(std::io::Error::last_os_error()).context("Failed to open /dev/net/tun");
     }
 
-    let c_name = CString::new(name).context("Invalid TUN device name")?;
     if let Err(e) = attach_tun(fd, &c_name) {
         unsafe {
             libc::close(fd);
         }
-        delete_tun(name);
         return Err(e);
     }
 
+    // From here dropping `device` closes the fd, which also removes the
+    // interface — configuration failures below clean up implicitly.
     let device = unsafe { tun_rs::AsyncDevice::from_fd(fd) }
         .context("Failed to create AsyncDevice from TUN fd")?;
+
+    run_ip(&[
+        "addr",
+        "add",
+        &format!("{local_ip}"),
+        "peer",
+        &format!("{peer_ip}"),
+        "dev",
+        name,
+    ])?;
+    run_ip(&["link", "set", name, "mtu", &mtu.to_string(), "up"])?;
 
     info!("TUN device {name} created and configured");
     Ok(device)
 }
 
-/// Delete the TUN device.
-pub fn delete_tun(name: &str) {
-    info!("Deleting TUN device {name}");
-    let result = std::process::Command::new("ip")
-        .args(["link", "delete", name])
-        .status();
-    match result {
-        Ok(status) if status.success() => info!("TUN device {name} deleted"),
-        Ok(status) => warn!("ip link delete {name} exited with {status}"),
-        Err(e) => warn!("Failed to delete TUN device {name}: {e}"),
+/// Run an `ip` subcommand, failing on non-zero exit.
+fn run_ip(args: &[&str]) -> Result<()> {
+    let status = std::process::Command::new("ip")
+        .args(args)
+        .status()
+        .with_context(|| format!("Failed to run ip {}", args.join(" ")))?;
+    if !status.success() {
+        anyhow::bail!("ip {} failed with {status}", args.join(" "));
     }
+    Ok(())
 }
 
-/// Attach to a TUN device via TUNSETIFF ioctl.
+/// Create-and-attach a TUN device via TUNSETIFF ioctl.
 fn attach_tun(fd: RawFd, name: &CString) -> Result<()> {
     unsafe {
         let mut req: libc::ifreq = std::mem::zeroed();

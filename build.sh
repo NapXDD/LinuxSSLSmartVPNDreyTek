@@ -166,6 +166,11 @@ nm_install() {
         "$DBUS_CONF_DIR/"
 
     info "Restarting NetworkManager..."
+    # NetworkManager.service uses KillMode=process: a restart leaves an
+    # already-running VPN service process alive holding the D-Bus name, so
+    # NM would keep talking to the old binary. Kill it first. The pattern is
+    # anchored to the binary path so it cannot match the sudo/pkill cmdline.
+    sudo pkill -f "^$NM_SERVICE_DIR/nm-draytek-service" 2>/dev/null || true
     sudo systemctl restart NetworkManager
     info "Installed. DrayTek SSL VPN should appear in GNOME Settings > VPN."
 }
@@ -190,6 +195,11 @@ nm_uninstall() {
     sudo rm -f /etc/NetworkManager/dispatcher.d/90-draytek-vpn-tray
 
     info "Restarting NetworkManager..."
+    # NetworkManager.service uses KillMode=process: a restart leaves an
+    # already-running VPN service process alive holding the D-Bus name, so
+    # NM would keep talking to the old binary. Kill it first. The pattern is
+    # anchored to the binary path so it cannot match the sudo/pkill cmdline.
+    sudo pkill -f "^$NM_SERVICE_DIR/nm-draytek-service" 2>/dev/null || true
     sudo systemctl restart NetworkManager
     info "Uninstalled."
 }

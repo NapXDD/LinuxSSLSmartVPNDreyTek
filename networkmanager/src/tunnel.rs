@@ -414,9 +414,8 @@ async fn run_tunnel(
     )
     .await;
 
-    // Teardown
+    // Teardown — closing the TUN fd removes the non-persistent device.
     drop(tun);
-    crate::tun_device::delete_tun(TUN_DEVICE_NAME);
 
     emit_state_changed(&conn, 5).await; // STOPPING
     emit_state_changed(&conn, 6).await; // STOPPED

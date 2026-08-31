@@ -19,6 +19,13 @@ set -euo pipefail
 #
 #   --keep   Leave the container running afterwards for inspection
 
+# Git Bash (MSYS) rewrites POSIX-looking arguments passed to native
+# Windows executables — podman.exe would receive /root/src as
+# C:/Program Files/Git/root/src. Disable the conversion; both variables
+# are ignored everywhere else.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 ENGINE="${CONTAINER_ENGINE:-podman}"
 IMAGE="${FEDORA_IMAGE:-registry.fedoraproject.org/fedora:44}"
 NAME="draytek-e2e-smoke"

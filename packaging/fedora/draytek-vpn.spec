@@ -119,6 +119,10 @@ install -Dm644 networkmanagertray/data/draytek-vpn-tray.desktop \
 # Clean up the old NM dispatcher script from prior versions, which used to
 # launch/kill the tray on vpn-up/vpn-down.
 rm -f /etc/NetworkManager/dispatcher.d/90-draytek-vpn-tray
+# NetworkManager.service uses KillMode=process: restarting NM leaves an
+# already-running VPN service process alive holding the D-Bus name, so NM
+# would keep talking to the old binary. Kill it so the new one is spawned.
+pkill -f '^%{_prefix}/lib/NetworkManager/nm-draytek-service' 2>/dev/null || :
 # Restart NetworkManager to pick up the new plugin
 if systemctl is-active --quiet NetworkManager; then
     systemctl restart NetworkManager || :
@@ -131,7 +135,9 @@ if [ $1 -eq 0 ]; then
 fi
 
 %postun networkmanager
-# Restart NetworkManager to unload the plugin
+# Kill any lingering VPN service process (NM's KillMode=process leaves it
+# running across restarts) and restart NetworkManager to unload the plugin.
+pkill -f '^%{_prefix}/lib/NetworkManager/nm-draytek-service' 2>/dev/null || :
 if systemctl is-active --quiet NetworkManager; then
     systemctl restart NetworkManager || :
 fi

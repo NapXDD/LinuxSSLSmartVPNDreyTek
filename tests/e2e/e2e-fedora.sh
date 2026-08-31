@@ -5,11 +5,18 @@ set -uo pipefail
 # Targets the Fedora KDE spin (Plasma), but the network path is
 # desktop-agnostic — it works on any Fedora with NetworkManager.
 #
+# SELinux is expected to be Enforcing (the Fedora default): the preflight
+# records the mode, and phase 4 fails on any AVC denial involving the
+# plugin — even in permissive mode, where the connection may succeed but
+# the same denial would break enforcing hosts.
+#
 # Phases:
-#   1. Preflight    — OS, tools, /dev/net/tun
+#   1. Preflight    — OS, tools, /dev/net/tun, SELinux mode
 #   2. Build        — build + install RPMs (./build.sh fedora install)
-#   3. Registration — installed files, NM VPN service type visible
-#   4. Connect      — create test connection, nmcli connection up
+#   3. Registration — installed files, NM VPN service type visible, no
+#                     stale plugin process from a previous install
+#   4. Connect      — create test connection, nmcli connection up,
+#                     SELinux AVC denial scan
 #   5. Ping         — ping the internet through the tunnel
 #   6. Teardown     — connection down + delete
 #
@@ -104,6 +111,20 @@ dump_nm_journal() {
     sudo journalctl -u NetworkManager --since "$START_TS" --no-pager 2>/dev/null | tail -n 80 || true
 }
 
+# AVC denials involving the plugin since test start. The plugin runs in
+# NetworkManager_t (spawned by NM), so SELinux vetoes — e.g. tun_socket
+# relabelfrom on TUN attach — show up under that context even though the
+# process is root. ausearch is authoritative; journalctl's audit transport
+# is the fallback when the audit tools aren't installed.
+scan_avc_denials() {
+    if command -v ausearch &>/dev/null; then
+        sudo ausearch -m avc -ts "$(date -d "$START_TS" '+%m/%d/%Y')" \
+            "$(date -d "$START_TS" '+%H:%M:%S')" 2>/dev/null
+    else
+        sudo journalctl _TRANSPORT=audit --since "$START_TS" --no-pager 2>/dev/null
+    fi | grep -E 'avc: *denied' | grep -Ei 'NetworkManager|tun_socket|draytek'
+}
+
 CONNECTED=0
 cleanup() {
     if [ "$CONNECTED" = 1 ]; then
@@ -143,6 +164,13 @@ else
     skip "No desktop session detected — tray checks will be skipped"
 fi
 
+SELINUX_MODE="$(getenforce 2>/dev/null || echo Unavailable)"
+case "$SELINUX_MODE" in
+    Enforcing)  pass "SELinux enforcing (the mode the plugin must survive on Fedora)" ;;
+    Permissive) skip "SELinux permissive — denials are logged but not enforced; run enforcing for full coverage" ;;
+    *)          skip "SELinux $SELINUX_MODE — AVC checks will not exercise the policy" ;;
+esac
+
 # ── Phase 2: Build + install ──────────────────────────────────────
 phase "2: Build + install RPMs"
 
@@ -170,6 +198,17 @@ check_file /usr/libexec/nm-draytek-auth-dialog
 check_file /usr/share/dbus-1/system.d/nm-draytek-service.conf
 check_file /usr/bin/draytek-vpn-tray
 check_file /etc/xdg/autostart/draytek-vpn-tray.desktop
+
+# NetworkManager.service uses KillMode=process, so a VPN service process
+# from before the (re)install can survive NM restarts, hold the D-Bus name,
+# and keep serving connections with the old binary. The install scripts now
+# kill it; verify none is left running a deleted executable.
+STALE_PID="$(pgrep -f '^/usr/lib/NetworkManager/nm-draytek-service' | head -n1 || true)"
+if [ -n "$STALE_PID" ] && sudo readlink "/proc/$STALE_PID/exe" 2>/dev/null | grep -q deleted; then
+    fail "Stale nm-draytek-service (pid $STALE_PID) still running a deleted binary"
+else
+    pass "No stale nm-draytek-service process"
+fi
 
 # Creating a connection with our service type only succeeds if NM parsed
 # the .name file — this IS the registration check. nmcli resolves the
@@ -220,6 +259,20 @@ else
         else
             fail "No interface carries $VPN_IP"
         fi
+    fi
+
+    # SELinux: any AVC denial involving the plugin during connect is a bug,
+    # even when permissive mode let the connection succeed anyway.
+    AVC_DENIALS="$(scan_avc_denials || true)"
+    if [ -n "$AVC_DENIALS" ]; then
+        fail "SELinux AVC denials during connect:"
+        echo "$AVC_DENIALS" | sed 's/^/       /'
+        [ "$SELINUX_MODE" = Enforcing ] || \
+            echo "       (permissive mode: not enforced in this run, but breaks enforcing hosts)"
+    elif [ "$SELINUX_MODE" = Enforcing ] || [ "$SELINUX_MODE" = Permissive ]; then
+        pass "No SELinux AVC denials during connect"
+    else
+        skip "SELinux not active — AVC scan not meaningful"
     fi
 fi
 
