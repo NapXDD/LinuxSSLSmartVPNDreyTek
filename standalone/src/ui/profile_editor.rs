@@ -73,6 +73,14 @@ pub fn show_profile_editor(
         .tooltip_text("Allow connections to routers using self-signed TLS certificates")
         .active(true)
         .build();
+    let ca_cert_row = adw::EntryRow::builder()
+        .title("CA Certificate (optional PEM path)")
+        .tooltip_text(
+            "PEM file trusted in addition to the system store when verifying.\n\
+             Point it at the router's own certificate to keep verification\n\
+             enabled with a self-signed router cert.",
+        )
+        .build();
     let route_remote_row = adw::SwitchRow::builder()
         .title("Route Remote Network")
         .tooltip_text(
@@ -124,11 +132,21 @@ pub fn show_profile_editor(
         });
     }
 
+    // The CA certificate is only consulted when verification is on
+    ca_cert_row.set_sensitive(!self_signed_row.is_active());
+    {
+        let ca_cert_row = ca_cert_row.clone();
+        self_signed_row.connect_active_notify(move |row| {
+            ca_cert_row.set_sensitive(!row.is_active());
+        });
+    }
+
     opts_group.add(&route_remote_row);
     opts_group.add(&routes_row);
     opts_group.add(&default_gw_row);
     opts_group.add(&keepalive_row);
     opts_group.add(&self_signed_row);
+    opts_group.add(&ca_cert_row);
     opts_group.add(&mru_row);
     prefs_page.add(&opts_group);
 
@@ -141,6 +159,7 @@ pub fn show_profile_editor(
         let pw = config::retrieve_password(&profile.name).unwrap_or_default();
         password_row.set_text(&pw);
         self_signed_row.set_active(profile.accept_self_signed);
+        ca_cert_row.set_text(profile.ca_cert.as_deref().unwrap_or(""));
         route_remote_row.set_active(profile.route_remote_network);
         default_gw_row.set_active(profile.default_gateway);
         keepalive_row.set_active(profile.keepalive);
@@ -224,6 +243,8 @@ pub fn show_profile_editor(
             .filter(|part: &String| !part.is_empty())
             .collect();
 
+        let ca_cert_text = ca_cert_row.text().trim().to_string();
+
         let profile = ProfileConfig {
             name: name_row.text().into(),
             server: server_row.text().into(),
@@ -231,6 +252,7 @@ pub fn show_profile_editor(
             username: username_row.text().into(),
             password: password_row.text().into(),
             accept_self_signed: self_signed_row.is_active(),
+            ca_cert: (!ca_cert_text.is_empty()).then_some(ca_cert_text),
             route_remote_network: route_remote_row.is_active(),
             default_gateway: default_gw_row.is_active(),
             keepalive: keepalive_row.is_active(),

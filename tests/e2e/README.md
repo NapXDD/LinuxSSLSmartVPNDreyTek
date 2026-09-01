@@ -67,7 +67,8 @@ start.
 | `DRAYTEK_USERNAME` | *(none)* | VPN username — required for connect/ping |
 | `DRAYTEK_PASSWORD` | *(none)* | VPN password — required for connect/ping |
 | `DRAYTEK_PORT` | `443` | SSL VPN port |
-| `DRAYTEK_VERIFY_CERT` | `no` | TLS certificate verification |
+| `DRAYTEK_VERIFY_CERT` | `yes` | TLS certificate verification (`no` for self-signed router certs) |
+| `DRAYTEK_CA_CERT` | *(none)* | PEM file pinned via the plugin's `ca-cert` option — keeps `verify-cert=yes` working with a self-signed router cert (those are leaf certs the system trust store can't hold). Relative paths resolve against `tests/e2e/` |
 | `DRAYTEK_DEFAULT_ROUTE` | `no` | `yes` routes ALL traffic through the VPN (Smart VPN "use default gateway on remote network"); the test then also asserts the default route rides the tunnel and plain pings work |
 | `PING_TARGET` | `8.8.8.8` | Host to ping through the tunnel |
 | `PING_COUNT` | `4` | Ping count |

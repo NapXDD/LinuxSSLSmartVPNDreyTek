@@ -41,6 +41,7 @@ struct SetupArgs {
     mtu: u16,
     routes: Vec<String>,
     default_gw: Option<Ipv4Addr>,
+    server_ip: Option<Ipv4Addr>,
     dns: Option<Ipv4Addr>,
 }
 
@@ -57,6 +58,7 @@ fn parse_setup_args(args: &[String]) -> Result<SetupArgs, Box<dyn std::error::Er
     let mut mtu = None;
     let mut routes = Vec::new();
     let mut default_gw = None;
+    let mut server_ip = None;
     let mut dns = None;
 
     let mut i = 0;
@@ -110,6 +112,14 @@ fn parse_setup_args(args: &[String]) -> Result<SetupArgs, Box<dyn std::error::Er
                         .parse::<Ipv4Addr>()?,
                 );
             }
+            "--server-ip" => {
+                i += 1;
+                server_ip = Some(
+                    args.get(i)
+                        .ok_or("--server-ip requires a value")?
+                        .parse::<Ipv4Addr>()?,
+                );
+            }
             "--dns" => {
                 i += 1;
                 dns = Some(
@@ -131,6 +141,7 @@ fn parse_setup_args(args: &[String]) -> Result<SetupArgs, Box<dyn std::error::Er
         mtu: mtu.ok_or("--mtu is required")?,
         routes,
         default_gw,
+        server_ip,
         dns,
     })
 }
@@ -215,6 +226,85 @@ fn run_cmd(program: &str, args: &[&str]) -> Result<(), Box<dyn std::error::Error
         .into());
     }
     Ok(())
+}
+
+// ── Server bypass route ──────────────────────────────────────────────────
+//
+// In default-gateway mode the VPN server itself must keep routing via the
+// physical uplink: once the default route points into the tunnel, the
+// tunnel's own TLS transport would otherwise be routed into the tunnel
+// and blackhole all traffic. (The NM plugin gets the same effect by
+// handing NetworkManager the external gateway address.)
+
+/// Path recording the pinned VPN-server address for a device. The bypass
+/// route lives on the uplink, so `ip route flush dev <tun>` at teardown
+/// does not remove it — teardown reads this file to find and delete it.
+fn bypass_state_path(device: &str) -> String {
+    format!("/run/draytek-vpn-{device}.bypass")
+}
+
+/// Pin a host route for the VPN server via the current (pre-VPN) default
+/// path and record it for teardown.
+fn add_server_bypass_route(
+    device: &str,
+    server: Ipv4Addr,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let server_str = server.to_string();
+
+    let output = Command::new("ip")
+        .args(["-4", "route", "get", &server_str])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ip route get {server_str} failed: {}", stderr.trim()).into());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let value_after = |key: &str| {
+        tokens
+            .iter()
+            .position(|t| *t == key)
+            .and_then(|i| tokens.get(i + 1).copied())
+    };
+    let via = value_after("via");
+    let dev = value_after("dev")
+        .ok_or_else(|| format!("no device in route to {server_str}: {}", text.trim()))?;
+    if dev == device {
+        return Err(format!(
+            "route to VPN server {server_str} already points at {device} — cannot pin a bypass"
+        )
+        .into());
+    }
+
+    // `replace` tolerates a stale bypass left by a crashed session.
+    match via {
+        Some(via) => run_cmd(
+            "ip",
+            &["route", "replace", &server_str, "via", via, "dev", dev],
+        )?,
+        None => run_cmd("ip", &["route", "replace", &server_str, "dev", dev])?,
+    }
+
+    if let Err(e) = std::fs::write(bypass_state_path(device), &server_str) {
+        eprintln!("Warning: could not record bypass route for teardown: {e}");
+    }
+    Ok(())
+}
+
+/// Remove the bypass route recorded by a previous setup, if any.
+fn remove_server_bypass_route(device: &str) {
+    let path = bypass_state_path(device);
+    let Ok(server) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let server = server.trim();
+    // Only act on a plausible recorded address — never delete arbitrary routes.
+    if server.parse::<Ipv4Addr>().is_ok() {
+        if let Err(e) = run_cmd("ip", &["route", "del", server]) {
+            eprintln!("Warning: failed to remove bypass route {server}: {e}");
+        }
+    }
+    let _ = std::fs::remove_file(&path);
 }
 
 // ── DNS helpers ──────────────────────────────────────────────────────────
@@ -314,8 +404,16 @@ fn cmd_setup(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         run_cmd("ip", &["route", "add", route, "dev", &setup.device])?;
     }
 
-    // 5. Default gateway
+    // 5. Default gateway — pin the VPN server via the uplink FIRST, or the
+    //    tunnel's TLS transport gets routed into the tunnel and blackholes.
     if let Some(gw) = setup.default_gw {
+        match setup.server_ip {
+            Some(server) => add_server_bypass_route(&setup.device, server)?,
+            None => eprintln!(
+                "Warning: default gateway requested without --server-ip — \
+                 tunnel transport may be routed into the tunnel"
+            ),
+        }
         let gw_str = gw.to_string();
         run_cmd(
             "ip",
@@ -384,7 +482,9 @@ fn cmd_teardown(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     validate_device_name(&teardown.device)?;
 
-    // 1. Flush routes (best-effort)
+    // 1. Flush routes (best-effort) — the server bypass route lives on the
+    //    uplink, not the TUN device, so it needs its own removal.
+    remove_server_bypass_route(&teardown.device);
     if let Err(e) = run_cmd("ip", &["route", "flush", "dev", &teardown.device]) {
         eprintln!("Warning: failed to flush routes: {e}");
     }

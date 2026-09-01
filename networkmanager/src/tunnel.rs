@@ -92,6 +92,10 @@ pub fn parse_settings(
         .get("verify-cert")
         .map(|s: &String| s == "yes")
         .unwrap_or(false);
+    let ca_cert = data_map
+        .get("ca-cert")
+        .filter(|s: &&String| !s.is_empty())
+        .cloned();
     let mru: u16 = data_map
         .get("mru")
         .map(|s: &String| s.parse().unwrap_or(0))
@@ -125,6 +129,7 @@ pub fn parse_settings(
         username,
         password,
         accept_self_signed: !verify_cert,
+        ca_cert,
         default_gateway: !never_default,
         route_remote_network,
         routes,
@@ -252,14 +257,7 @@ async fn run_tunnel(
 ) -> Result<()> {
     // Phase 1: TLS + HTTP CONNECT
     info!("Connecting to {}:{}", profile.server, profile.port);
-    let mut tls_stream = connection::connect(
-        &profile.server,
-        profile.port,
-        &profile.username,
-        &profile.password,
-        profile.accept_self_signed,
-    )
-    .await?;
+    let mut tls_stream = connection::connect(&profile).await?;
 
     // The external VPN server address, as actually connected (post-DNS).
     // NM needs this as "gateway" in the config dicts to install a bypass

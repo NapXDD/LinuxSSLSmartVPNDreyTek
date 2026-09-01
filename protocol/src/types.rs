@@ -16,6 +16,12 @@ pub struct ConnectionProfile {
     pub password: String,
     /// Accept self-signed certificates.
     pub accept_self_signed: bool,
+    /// Path to a PEM certificate trusted in addition to the system store
+    /// when verifying. Routers typically serve a self-signed *leaf* cert
+    /// (no CA:TRUE), which p11-kit refuses to extract into the system
+    /// bundle — pinning the exact cert here is the only way to keep
+    /// verification enabled for them.
+    pub ca_cert: Option<String>,
     /// Use default route through VPN.
     pub default_gateway: bool,
     /// Automatically route the gateway's /24 subnet through the VPN.
@@ -37,6 +43,7 @@ impl Default for ConnectionProfile {
             username: String::new(),
             password: String::new(),
             accept_self_signed: true,
+            ca_cert: None,
             default_gateway: false,
             route_remote_network: true,
             routes: Vec::new(),

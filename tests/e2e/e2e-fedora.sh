@@ -31,6 +31,10 @@ set -uo pipefail
 #   DRAYTEK_PASSWORD     VPN password           (required for connect/ping)
 #   DRAYTEK_PORT         default 443
 #   DRAYTEK_VERIFY_CERT  default yes
+#   DRAYTEK_CA_CERT      PEM file pinned via the plugin's ca-cert option
+#                        (keeps verify-cert=yes working with a self-signed
+#                        router cert; the system trust store can't hold
+#                        those — p11-kit only extracts CA certificates)
 #   PING_TARGET          default 8.8.8.8  (must be routable via the VPN —
 #                        internet ping requires the router to forward
 #                        tunnel traffic upstream; use an internal host
@@ -58,8 +62,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # copy e2e.env.example). Variables already set in the environment take
 # precedence over the file. Override the path with E2E_ENV_FILE.
 E2E_ENV_VARS=(DRAYTEK_GATEWAY DRAYTEK_USERNAME DRAYTEK_PASSWORD
-              DRAYTEK_PORT DRAYTEK_VERIFY_CERT DRAYTEK_DEFAULT_ROUTE
-              PING_TARGET PING_COUNT CONNECT_TIMEOUT)
+              DRAYTEK_PORT DRAYTEK_VERIFY_CERT DRAYTEK_CA_CERT
+              DRAYTEK_DEFAULT_ROUTE PING_TARGET PING_COUNT CONNECT_TIMEOUT)
 ENV_FILE="${E2E_ENV_FILE:-$SCRIPT_DIR/e2e.env}"
 if [ -f "$ENV_FILE" ]; then
     _saved=""
@@ -70,6 +74,13 @@ if [ -f "$ENV_FILE" ]; then
     . "$ENV_FILE"
     eval "$_saved"
     echo "Loaded config from $ENV_FILE"
+fi
+
+# A relative DRAYTEK_CA_CERT resolves against the env-file directory (the
+# README says to run from the repo root, but the cert lives next to e2e.env).
+if [ -n "${DRAYTEK_CA_CERT:-}" ] && [ ! -f "$DRAYTEK_CA_CERT" ] \
+        && [ -f "$SCRIPT_DIR/$DRAYTEK_CA_CERT" ]; then
+    DRAYTEK_CA_CERT="$SCRIPT_DIR/$DRAYTEK_CA_CERT"
 fi
 
 CON_NAME="draytek-e2e-test"
@@ -233,6 +244,21 @@ TUN_IF=""
 if [ "$HAVE_CREDS" = 0 ]; then
     skip "No DRAYTEK_GATEWAY/USERNAME/PASSWORD in env — connect skipped"
 else
+    # Routers with a self-signed certificate fail verify-cert=yes against
+    # the system trust store — and cannot be added to it: they are leaf
+    # certs (no CA:TRUE), which p11-kit refuses to extract into the
+    # bundle. The plugin's ca-cert option pins the PEM directly instead.
+    if [ -n "${DRAYTEK_CA_CERT:-}" ]; then
+        if [ ! -f "$DRAYTEK_CA_CERT" ]; then
+            fail "DRAYTEK_CA_CERT not found: $DRAYTEK_CA_CERT"
+        elif nmcli connection modify "$CON_NAME" \
+                +vpn.data "ca-cert=$(readlink -f "$DRAYTEK_CA_CERT")"; then
+            pass "Router certificate pinned (vpn.data ca-cert)"
+        else
+            fail "Could not set ca-cert on the test connection"
+        fi
+    fi
+
     nmcli connection modify "$CON_NAME" vpn.secrets "password=${DRAYTEK_PASSWORD}"
     if nmcli --wait "$CONNECT_TIMEOUT" connection up "$CON_NAME"; then
         CONNECTED=1

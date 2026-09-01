@@ -84,14 +84,16 @@ async fn run_inner(
 ) -> Result<()> {
     // Phase 1: TLS + HTTP CONNECT
     status_tx.send(TunnelStatus::Connecting);
-    let mut tls_stream = connection::connect(
-        &profile.server,
-        profile.port,
-        &profile.username,
-        &profile.password,
-        profile.accept_self_signed,
-    )
-    .await?;
+    let mut tls_stream = connection::connect(&profile).await?;
+
+    // The VPN server address as actually connected (post-DNS). In
+    // default-gateway mode the helper pins a bypass host route to it via
+    // the physical uplink — without one, the tunnel's own TLS transport
+    // would be routed into the tunnel and blackhole all traffic.
+    let server_ip: Option<std::net::Ipv4Addr> = match tls_stream.get_ref().peer_addr() {
+        Ok(std::net::SocketAddr::V4(addr)) => Some(*addr.ip()),
+        _ => None,
+    };
 
     status_tx.send(TunnelStatus::Handshaking);
 
@@ -126,15 +128,16 @@ async fn run_inner(
     }
     routes.extend(profile.routes.iter().cloned());
 
-    privilege::setup(
-        TUN_DEVICE_NAME,
-        neg.local_ip,
-        neg.remote_ip,
-        neg.mtu,
-        &routes,
+    privilege::setup(privilege::TunnelSetup {
+        device: TUN_DEVICE_NAME,
+        local_ip: neg.local_ip,
+        peer_ip: neg.remote_ip,
+        mtu: neg.mtu,
+        routes: &routes,
         default_gw,
-        neg.dns,
-    )
+        server_ip,
+        dns: neg.dns,
+    })
     .await
     .context("Privileged tunnel setup failed")?;
 

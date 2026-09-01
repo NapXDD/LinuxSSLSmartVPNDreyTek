@@ -21,6 +21,9 @@ pub struct ProfileConfig {
     pub password: String,
     #[serde(default = "default_true")]
     pub accept_self_signed: bool,
+    /// PEM certificate trusted in addition to the system store when verifying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_cert: Option<String>,
     #[serde(default)]
     pub default_gateway: bool,
     /// Automatically route the gateway's /24 subnet through the VPN.
@@ -55,6 +58,7 @@ impl From<ProfileConfig> for ConnectionProfile {
             username: cfg.username,
             password,
             accept_self_signed: cfg.accept_self_signed,
+            ca_cert: cfg.ca_cert,
             default_gateway: cfg.default_gateway,
             route_remote_network: cfg.route_remote_network,
             routes: cfg.routes,
@@ -73,6 +77,7 @@ impl From<&ConnectionProfile> for ProfileConfig {
             username: profile.username.clone(),
             password: String::new(), // never store in TOML — use keyring
             accept_self_signed: profile.accept_self_signed,
+            ca_cert: profile.ca_cert.clone(),
             default_gateway: profile.default_gateway,
             route_remote_network: profile.route_remote_network,
             routes: profile.routes.clone(),
@@ -200,6 +205,7 @@ mod tests {
                 username: "admin".to_string(),
                 password: String::new(),
                 accept_self_signed: true,
+                ca_cert: None,
                 default_gateway: false,
                 route_remote_network: true,
                 routes: vec!["10.0.0.0/8".to_string(), "172.16.0.0/12".to_string()],
@@ -257,6 +263,7 @@ mod tests {
             username: "user".to_string(),
             password: String::new(),
             accept_self_signed: false,
+            ca_cert: None,
             default_gateway: true,
             route_remote_network: true,
             routes: vec![],

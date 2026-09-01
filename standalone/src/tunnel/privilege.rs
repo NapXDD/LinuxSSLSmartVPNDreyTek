@@ -128,18 +128,27 @@ async fn run_helper(args: Vec<String>) -> Result<std::process::Output> {
     }
 }
 
+/// Parameters for the privileged tunnel setup.
+pub struct TunnelSetup<'a> {
+    pub device: &'a str,
+    pub local_ip: Ipv4Addr,
+    pub peer_ip: Ipv4Addr,
+    pub mtu: u16,
+    pub routes: &'a [String],
+    /// Route all traffic through the tunnel via this gateway.
+    pub default_gw: Option<Ipv4Addr>,
+    /// VPN server address as connected. In default-gateway mode the helper
+    /// pins a host route to it via the physical uplink so the tunnel's own
+    /// TLS transport is not routed into the tunnel.
+    pub server_ip: Option<Ipv4Addr>,
+    pub dns: Option<Ipv4Addr>,
+}
+
 /// Set up the TUN device, routing, and DNS via the privileged helper.
 ///
 /// If the helper has CAP_NET_ADMIN, runs directly. Otherwise uses pkexec.
-pub async fn setup(
-    device: &str,
-    local_ip: Ipv4Addr,
-    peer_ip: Ipv4Addr,
-    mtu: u16,
-    routes: &[String],
-    default_gw: Option<Ipv4Addr>,
-    dns: Option<Ipv4Addr>,
-) -> Result<()> {
+pub async fn setup(setup: TunnelSetup<'_>) -> Result<()> {
+    let device = setup.device;
     let helper = find_helper()?;
     let uid = current_uid();
 
@@ -157,24 +166,29 @@ pub async fn setup(
         "--uid".to_string(),
         uid.to_string(),
         "--local-ip".to_string(),
-        local_ip.to_string(),
+        setup.local_ip.to_string(),
         "--peer-ip".to_string(),
-        peer_ip.to_string(),
+        setup.peer_ip.to_string(),
         "--mtu".to_string(),
-        mtu.to_string(),
+        setup.mtu.to_string(),
     ];
 
-    for route in routes {
+    for route in setup.routes {
         args.push("--route".to_string());
         args.push(route.clone());
     }
 
-    if let Some(gw) = default_gw {
+    if let Some(gw) = setup.default_gw {
         args.push("--default-gw".to_string());
         args.push(gw.to_string());
     }
 
-    if let Some(dns_ip) = dns {
+    if let Some(server) = setup.server_ip {
+        args.push("--server-ip".to_string());
+        args.push(server.to_string());
+    }
+
+    if let Some(dns_ip) = setup.dns {
         args.push("--dns".to_string());
         args.push(dns_ip.to_string());
     }

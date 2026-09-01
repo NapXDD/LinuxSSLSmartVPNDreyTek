@@ -20,6 +20,7 @@
 #define NM_DRAYTEK_KEY_PORT                 "port"
 #define NM_DRAYTEK_KEY_USERNAME             "username"
 #define NM_DRAYTEK_KEY_VERIFY_CERT          "verify-cert"
+#define NM_DRAYTEK_KEY_CA_CERT              "ca-cert"
 #define NM_DRAYTEK_KEY_MRU                  "mru"
 #define NM_DRAYTEK_KEY_ROUTE_REMOTE_NETWORK "route-remote-network"
 #define NM_DRAYTEK_KEY_NEVER_DEFAULT        "never-default"

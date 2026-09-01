@@ -233,6 +233,11 @@ nmcli connection add type vpn \
 # Set the password
 nmcli connection modify "My DrayTek VPN" vpn.secrets "password=mypassword"
 
+# Recommended: enable TLS verification. Routers serve a self-signed cert
+# by default, so pin it via ca-cert — see docs/router-certificate.md
+nmcli connection modify "My DrayTek VPN" \
+    +vpn.data "verify-cert=yes,ca-cert=/etc/pki/tls/certs/draytek-router.pem"
+
 # Connect
 nmcli connection up "My DrayTek VPN"
 ```
@@ -259,6 +264,7 @@ These go in `vpn.data` when creating a connection via `nmcli`:
 | `port` | `443` | Server port |
 | `username` | *(required)* | VPN username |
 | `verify-cert` | `no` | Verify server TLS certificate (`yes`/`no`) |
+| `ca-cert` | *(none)* | PEM file trusted in addition to the system store when verifying. Point it at the router's own certificate to keep `verify-cert=yes` working with a self-signed router cert — see [docs/router-certificate.md](docs/router-certificate.md) |
 | `mru` | `0` (auto) | MRU to propose during LCP negotiation |
 | `route-remote-network` | `yes` | Auto-route the remote gateway's /24 subnet |
 | `never-default` | `yes` | Don't replace the default route with the VPN |

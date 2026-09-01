@@ -9,19 +9,16 @@ use tokio_openssl::SslStream;
 use tracing::{debug, info};
 
 use crate::constants::CLIENT_NAME;
+use crate::types::ConnectionProfile;
 
 /// Establish a TLS connection and perform the HTTP CONNECT handshake.
 ///
 /// Returns the TLS stream ready for binary SSTP framing.
-pub async fn connect(
-    server: &str,
-    port: u16,
-    username: &str,
-    password: &str,
-    accept_self_signed: bool,
-) -> Result<SslStream<TcpStream>> {
+pub async fn connect(profile: &ConnectionProfile) -> Result<SslStream<TcpStream>> {
+    let server = profile.server.as_str();
+
     // Step 1: TCP connection
-    let addr = format!("{server}:{port}");
+    let addr = format!("{server}:{}", profile.port);
     info!("Connecting to {addr}");
     let tcp_stream = tokio::time::timeout(
         std::time::Duration::from_secs(15),
@@ -41,8 +38,16 @@ pub async fn connect(
         SslConnector::builder(SslMethod::tls()).context("Failed to create SSL connector")?;
     // DrayTek routers require legacy TLS renegotiation
     builder.set_options(SslOptions::ALLOW_UNSAFE_LEGACY_RENEGOTIATION);
-    if accept_self_signed {
+    if profile.accept_self_signed {
         builder.set_verify(SslVerifyMode::NONE);
+    } else if let Some(ca) = &profile.ca_cert {
+        // Trust this PEM in addition to the system store. Routers serve
+        // self-signed leaf certs the system store cannot hold (p11-kit
+        // only extracts CA certificates into the bundle), but OpenSSL
+        // accepts an exact self-signed match loaded into the store.
+        builder
+            .set_ca_file(ca)
+            .with_context(|| format!("Failed to load CA certificate {ca}"))?;
     }
 
     let connector = builder.build();
@@ -62,8 +67,8 @@ pub async fn connect(
     info!("TLS connection established");
 
     // Step 3: HTTP CONNECT handshake
-    let credentials =
-        base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+    let credentials = base64::engine::general_purpose::STANDARD
+        .encode(format!("{}:{}", profile.username, profile.password));
 
     let request = format!(
         "CONNECT / HTTP/1.0\r\n\

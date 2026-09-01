@@ -52,11 +52,14 @@ typedef struct {
     GtkWidget *default_gw_switch;
     GtkWidget *keepalive_switch;
     GtkWidget *self_signed_switch;
+    GtkWidget *ca_cert_entry;
     GtkWidget *mru_spin;
 
     /* Rows greyed out when default gateway is on */
     GtkWidget *route_remote_row;
     GtkWidget *routes_row;
+    /* Row greyed out when self-signed certs are accepted (no verification) */
+    GtkWidget *ca_cert_row;
 } DraytekEditor;
 
 typedef struct {
@@ -95,6 +98,18 @@ static void
 switch_changed_cb(GObject *gobject, GParamSpec *pspec, gpointer user_data)
 {
     g_signal_emit_by_name(DRAYTEK_EDITOR(user_data), "changed");
+}
+
+static void
+self_signed_toggled(GObject *gobject, GParamSpec *pspec, gpointer user_data)
+{
+    DraytekEditor *self = DRAYTEK_EDITOR(user_data);
+    gboolean active = gtk_switch_get_active(GTK_SWITCH(self->self_signed_switch));
+
+    /* The CA certificate is only consulted when verification is on */
+    gtk_widget_set_sensitive(self->ca_cert_row, !active);
+
+    g_signal_emit_by_name(self, "changed");
 }
 
 static void
@@ -330,6 +345,19 @@ init_editor_widget(DraytekEditor *self, NMConnection *connection)
                         box);
     }
 
+    /* CA Certificate */
+    self->ca_cert_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(self->ca_cert_entry),
+                                   "/etc/pki/tls/certs/router.pem (optional)");
+    self->ca_cert_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(self->ca_cert_entry, TRUE);
+    COMPAT_BOX_APPEND(self->ca_cert_row, self->ca_cert_entry);
+    grid_attach_row(grid, row++, "CA Certificate",
+                    "PEM file trusted in addition to the system store when verifying.\n"
+                    "Point it at the router's own certificate to keep verification\n"
+                    "enabled with a self-signed router cert.",
+                    self->ca_cert_row);
+
     /* MRU */
     self->mru_spin = gtk_spin_button_new_with_range(0, 9000, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(self->mru_spin), NM_DRAYTEK_DEFAULT_MRU);
@@ -385,6 +413,10 @@ init_editor_widget(DraytekEditor *self, NMConnection *connection)
             gtk_switch_set_active(GTK_SWITCH(self->self_signed_switch), accept_self_signed);
         }
 
+        val = nm_setting_vpn_get_data_item(s_vpn, NM_DRAYTEK_KEY_CA_CERT);
+        if (val)
+            COMPAT_ENTRY_SET_TEXT(self->ca_cert_entry, val);
+
         val = nm_setting_vpn_get_data_item(s_vpn, NM_DRAYTEK_KEY_MRU);
         if (val) {
             int mru = atoi(val);
@@ -396,8 +428,10 @@ init_editor_widget(DraytekEditor *self, NMConnection *connection)
     /* ---- Apply initial sensitivity ---- */
     {
         gboolean gw_active = gtk_switch_get_active(GTK_SWITCH(self->default_gw_switch));
+        gboolean ss_active = gtk_switch_get_active(GTK_SWITCH(self->self_signed_switch));
         gtk_widget_set_sensitive(self->route_remote_row, !gw_active);
         gtk_widget_set_sensitive(self->routes_row, !gw_active);
+        gtk_widget_set_sensitive(self->ca_cert_row, !ss_active);
     }
 
     /* ---- Connect change signals ---- */
@@ -406,11 +440,12 @@ init_editor_widget(DraytekEditor *self, NMConnection *connection)
     g_signal_connect(self->username_entry,  "changed", G_CALLBACK(stuff_changed_cb), self);
     g_signal_connect(self->password_entry,  "changed", G_CALLBACK(stuff_changed_cb), self);
     g_signal_connect(self->routes_entry,    "changed", G_CALLBACK(stuff_changed_cb), self);
+    g_signal_connect(self->ca_cert_entry,   "changed", G_CALLBACK(stuff_changed_cb), self);
     g_signal_connect(self->mru_spin,        "value-changed", G_CALLBACK(stuff_changed_cb), self);
 
     g_signal_connect(self->route_remote_switch,   "notify::active", G_CALLBACK(switch_changed_cb), self);
     g_signal_connect(self->keepalive_switch,      "notify::active", G_CALLBACK(switch_changed_cb), self);
-    g_signal_connect(self->self_signed_switch,    "notify::active", G_CALLBACK(switch_changed_cb), self);
+    g_signal_connect(self->self_signed_switch,    "notify::active", G_CALLBACK(self_signed_toggled), self);
 
     g_signal_connect(self->default_gw_switch, "notify::active", G_CALLBACK(default_gw_toggled), self);
 
@@ -436,7 +471,7 @@ update_connection(NMVpnEditor *editor, NMConnection *connection, GError **error)
 {
     DraytekEditor *self = DRAYTEK_EDITOR(editor);
     NMSettingVpn  *s_vpn;
-    const char    *gateway, *username, *password, *routes;
+    const char    *gateway, *username, *password, *routes, *ca_cert;
     char           buf[32];
 
     gateway = COMPAT_ENTRY_GET_TEXT(self->gateway_entry);
@@ -494,6 +529,10 @@ update_connection(NMVpnEditor *editor, NMConnection *connection, GError **error)
 
     nm_setting_vpn_add_data_item(s_vpn, NM_DRAYTEK_KEY_VERIFY_CERT,
         gtk_switch_get_active(GTK_SWITCH(self->self_signed_switch)) ? "no" : "yes");
+
+    ca_cert = COMPAT_ENTRY_GET_TEXT(self->ca_cert_entry);
+    if (ca_cert && *ca_cert)
+        nm_setting_vpn_add_data_item(s_vpn, NM_DRAYTEK_KEY_CA_CERT, ca_cert);
 
     g_snprintf(buf, sizeof(buf), "%d",
                gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(self->mru_spin)));
